@@ -1,0 +1,157 @@
+name: Build Inverter - Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (ej: v1.0.0)"
+        required: false
+        default: "dev"
+
+jobs:
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller \
+            --name="Inverter" \
+            --windowed \
+            --onedir \
+            --clean \
+            --noconfirm \
+            --icon="assets/Inverter.icns" \
+            --collect-all=customtkinter \
+            --collect-all=imageio_ffmpeg \
+            --collect-all=yt_dlp \
+            "--add-data=assets:assets" \
+            "--add-data=ui:ui" \
+            main.py
+
+      - name: Create ZIP
+        run: |
+          cd dist
+          zip -r "../Inverter-macOS.zip" "Inverter.app"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Inverter-macOS
+          path: Inverter-macOS.zip
+          retention-days: 30
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Descargar FFmpeg para Windows (Garantiza la conversión a MP3)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
+          # Copia el ffmpeg.exe a la raíz para que PyInstaller lo detecte o empaquete bien
+          Copy-Item "ffmpeg_temp\ffmpeg*\bin\ffmpeg.exe" -Destination "."
+          Remove-Item -Path "ffmpeg.zip", "ffmpeg_temp" -Recurse
+
+      - name: Build .exe with PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --name="Inverter" `
+            --windowed `
+            --onefile `
+            --clean `
+            --noconfirm `
+            --icon="assets/Inverter.ico" `
+            --add-binary="ffmpeg.exe;." `
+            --collect-all=customtkinter `
+            --collect-all=imageio_ffmpeg `
+            --collect-all=yt_dlp `
+            "--add-data=assets;assets" `
+            "--add-data=ui;ui" `
+            main.py
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\Inverter.exe" -DestinationPath "Inverter-Windows.zip" -Force
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Inverter-Windows
+          path: Inverter-Windows.zip
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Inverter-macOS
+          path: ./release-files
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Inverter-Windows
+          path: ./release-files
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Inverter ${{ github.ref_name }}"
+          body: |
+            ## Inverter ${{ github.ref_name }}
+
+            Descarga el archivo para tu sistema operativo:
+
+            | Sistema | Archivo | Instrucciones |
+            |---------|---------|---------------|
+            | macOS | `Inverter-macOS.zip` | Descomprime y arrastra `Inverter.app` a Aplicaciones |
+            | Windows | `Inverter-Windows.zip` | Descomprime y ejecuta `Inverter.exe` |
+
+            > **Windows**: Si aparece aviso de SmartScreen, haz clic en "Mas informacion" y luego "Ejecutar de todas formas".
+          files: |
+            release-files/Inverter-macOS.zip
+            release-files/Inverter-Windows.zip
+          draft: false
+          prerelease: false
