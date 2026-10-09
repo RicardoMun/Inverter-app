@@ -13,6 +13,37 @@ except ImportError:
     imageio_ffmpeg = None
 
 
+def _get_cookies_browser():
+    """
+    Devuelve una tupla compatible con 'cookiesfrombrowser' de yt-dlp para
+    autenticarse con YouTube y evitar el error de verificación de bots.
+
+    Prueba los navegadores en orden de preferencia:
+      1. Chrome  (la mayoría de los usuarios en Windows)
+      2. Edge    (alternativa común en Windows)
+      3. Firefox
+      4. Brave
+    Si ninguno está disponible o falla, devuelve None y la descarga
+    continúa sin cookies (puede fallar en redes muy restringidas).
+    """
+    for browser in ('chrome', 'edge', 'firefox', 'brave'):
+        try:
+            test_opts = {
+                'cookiesfrombrowser': (browser,),
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True,
+            }
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                _ = ydl.cookiejar  # fuerza la carga del jar para detectar errores
+            return (browser,)
+        except Exception:
+            continue
+    return None
+
+
+
+
 def get_ffmpeg_binary_path():
     """Localiza el binario de FFmpeg en el sistema o en imageio-ffmpeg."""
     sys_ffmpeg = shutil.which("ffmpeg")
@@ -26,6 +57,8 @@ def get_ffmpeg_binary_path():
         except Exception:
             pass
     return None
+
+
 
 
 def clean_youtube_url(url: str) -> str:
@@ -86,6 +119,10 @@ def fetch_video_metadata(url: str):
     """
     clean_url = clean_youtube_url(url)
     
+    # Intentar obtener cookies del navegador para evitar el bloqueo de bots de YouTube.
+    # Se prueban Chrome y Edge en orden; si ninguno funciona se procede sin cookies.
+    _cookies_browser = _get_cookies_browser()
+
     ydl_opts = {
         'skip_download': True,
         'noplaylist': True,           # NUNCA descargar ni parsear playlists
@@ -94,6 +131,8 @@ def fetch_video_metadata(url: str):
         'no_warnings': True,
         'socket_timeout': 10,
     }
+    if _cookies_browser:
+        ydl_opts['cookiesfrombrowser'] = _cookies_browser
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(clean_url, download=False)
@@ -181,6 +220,9 @@ def download_mp3(url: str, output_folder: str, bitrate="192",
 
     out_tmpl = os.path.join(output_folder, '%(title)s.%(ext)s')
 
+    # Intentar obtener cookies del navegador para evitar el bloqueo de bots de YouTube.
+    _cookies_browser = _get_cookies_browser()
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': out_tmpl,
@@ -196,6 +238,8 @@ def download_mp3(url: str, output_folder: str, bitrate="192",
         'no_warnings': True,
         'socket_timeout': 15,
     }
+    if _cookies_browser:
+        ydl_opts['cookiesfrombrowser'] = _cookies_browser
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
